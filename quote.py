@@ -1,39 +1,59 @@
-from telegram.ext import Updater, CommandHandler, run_async, CallbackContext
-from telegram import (
-    Update,
-    TelegramError,
-    InlineKeyboardMarkup,
-    InlineKeyboardButton,
-    UserProfilePhotos,
-    Sticker,
-)
-from PIL import ImageFont, ImageDraw, Image, ImageFilter
-from os import getcwd, remove
+import random
+from os import remove
+import sys
 from os.path import join
-import glob
+from pathlib import Path
+from argparse import ArgumentParser
 
-updater = Updater(
-    token="", use_context=True
-)
+from PIL import ImageFont, ImageDraw, Image, ImageFilter
+from telegram import Update
+from telegram.ext import CommandHandler, CallbackContext, Updater
+
+parser = ArgumentParser(description="Reply to a message to me to get it's sticker.")
+parser.add_argument("-t", "--token", help="Telegram bot token")
+args = parser.parse_args()
+
+updater = Updater(token=args.token, use_context=True)
 dispatcher = updater.dispatcher
 
 
 def get_sticker(update: Update, context: CallbackContext):
+    context.bot.send_chat_action(update.effective_chat.id, "upload_photo")
     rep_msg = update.effective_message.reply_to_message
-    # update.effective_message.reply_text(str(rep_msg))
 
-    def get_message_data(rep_msg):
+    def generate_temp_profile(name, assigned_color):
+        BASE_DIR = Path(sys.argv[0]).parent.absolute()
+        ls = name.split(" ")
+        if len(ls) > 1:
+            initials = ls[0][0] + ls[1][0]
+        else:
+            initials = ls[0][0]
 
-        profile_pic = update.effective_message.reply_to_message.from_user.get_profile_photos().photos[
-            0
-        ][
-            0
-        ]
-
-        file_pp = context.bot.getFile(profile_pic)
-        file_pp.download(
-            f"{update.effective_message.reply_to_message.from_user.id}_dp.jpg"
+        font_bold = ImageFont.truetype(
+            join(BASE_DIR, "Fonts", "LucidaGrandeBold.ttf"), size=60, encoding="unic"
         )
+        img = Image.new("RGB", (160, 160), color=(assigned_color))
+        draw = ImageDraw.Draw(img)
+        text_width, text_height = draw.textsize(initials, font_bold)
+        position = ((160 - text_width) / 2, (160 - text_height) / 2)
+        draw.text(position, initials, (255, 255, 255), font=font_bold)
+        img.save(
+            f"{update.effective_message.reply_to_message.from_user.id}_dp.jpg",
+        )
+
+    def get_message_data(rep_msg):  # Get required data of the message to be quoted
+
+        head_tg = [
+            (238, 73, 40),
+            (65, 169, 3),
+            (224, 150, 2),
+            (15, 148, 237),
+            (143, 59, 247),
+            (252, 67, 128),
+            (0, 161, 196),
+            (235, 112, 2),
+        ]
+        assigned_color = random.choice(head_tg)
 
         if rep_msg.from_user.last_name:
             name = rep_msg.from_user.first_name + " " + rep_msg.from_user.last_name
@@ -45,129 +65,178 @@ def get_sticker(update: Update, context: CallbackContext):
         if rep_msg.text:
             text = rep_msg.text
 
-        return name, text, profile_pic
+        try:
+            profile_pic = update.effective_message.reply_to_message.from_user.get_profile_photos().photos[
+                0
+            ][
+                0
+            ]  # Get users Profile Photo
 
-    def get_raw_sticker(name, text):
-        def text_wrap(text, font, max_width):
-            lines = []
-            # If the width of the text is smaller than image width
-            # we don't need to split it, just add it to the lines array
-            # and return
-            if font.getsize(text)[0] <= max_width:
-                lines.append(text)
-            else:
-                # split the line by spaces to get words
-                words = text.split(" ")
-                i = 0
-                # append every word to a line while its width is shorter than image width
-                while i < len(words):
-                    line = ""
-                    while (
-                        i < len(words) and font.getsize(line + words[i])[0] <= max_width
-                    ):
-                        line = line + words[i] + " "
-                        i += 1
-                    if not line:
-                        line = words[i]
-                        i += 1
-                    # when the line gets longer than the max width do not append the word,
-                    # add the line to the lines array
-                    lines.append(line)
-            return lines
-
-        def draw_text(name, text):
-
-            img = Image.new("RGB", (150, 70), color=(11, 8, 26))
-            # open the background file
-            # size() returns a tuple of (width, height)
-            image_size = img.size
-            draw = ImageDraw.Draw(img)
-            # create the ImageFont instance
-            font_file_path_normal = join(BASE_DIR, "LucidaGrande.ttf")
-            font_normal = ImageFont.truetype(
-                font_file_path_normal, size=15, encoding="unic"
-            )
-            font_file_path_bold = join(BASE_DIR, "LucidaGrandeBold.ttf")
-            font_bold = ImageFont.truetype(
-                font_file_path_bold, size=15, encoding="unic"
+            file_pp = context.bot.getFile(profile_pic)
+            file_pp.download(
+                f"{update.effective_message.reply_to_message.from_user.id}_dp.jpg"
             )
 
-            # get username
-            # name = "Alok Bhawankar"
-            draw.text((10, 10), name, (0, 153, 38), font_bold)
+        except IndexError:
+            generate_temp_profile(name, assigned_color)
 
-            # get shorter lines
+        return name, text, assigned_color
 
-            lines = text_wrap(text, font_normal, image_size[0])
-            line_height = font_normal.getsize("hg")[1]
-            x = 10
-            y = 30
-            for line in lines:
-                # draw the line on the image
-                draw.text((x, y), line, (255, 255, 255), font_normal)
-                # update the y position so that we can use it for next line
-                y = y + line_height
-            # save the image
-            # img.save(
-            #     f"{update.effective_message.reply_to_message.from_user.id}_text.png",
-            #     optimize=True,
-            # )
+    def get_raw_sticker(name, text, assigned_color):
+        def text_wrap(text: str, font: ImageFont, max_width: int) -> str:
+            """
+            Get properly formatted text
+            :param text: The base message text
+            :param font: font to be used for the format
+            :param max_width: maximum width of the rendered text
+            :return: The formatted text as a string
+            """
+            text_blob = ""
+
+            for line in text.split("\n"):
+                # for each line
+                line_text = ""
+                for word in line.split(" "):
+                    if font.getsize(line_text + word)[0] > max_width:
+                        # append current line to the text_blob, and shift current word to next line
+                        text_blob += line_text.strip() + "\n"
+                        line_text = word
+                    else:
+                        # append current word to the line
+                        line_text += " " + word
+
+                # append current line to the text blob
+                text_blob += line_text.strip() + "\n"
+
+            return text_blob.strip()
+
+        def add_corners(img):
+            rad = 30
+            circle = Image.new("L", (rad * 2, rad * 2), 0)
+            draw = ImageDraw.Draw(circle)
+            draw.ellipse((0, 0, rad * 2, rad * 2), fill=255)
+            alpha = Image.new("L", img.size, 255)
+            w, h = img.size
+            alpha.paste(circle.crop((0, 0, rad, rad)), (0, 0))
+            alpha.paste(circle.crop((0, rad, rad, rad * 2)), (0, h - rad))
+            alpha.paste(circle.crop((rad, 0, rad * 2, rad)), (w - rad, 0))
+            alpha.paste(circle.crop((rad, rad, rad * 2, rad * 2)), (w - rad, h - rad))
+            img.putalpha(alpha)
             return img
 
-        def mask_circle_transparent(pil_img, blur_radius, offset=0):
-            offset = blur_radius * 2 + offset
-            mask = Image.new("L", pil_img.size, 0)
+        def draw_text(name, text, assigned_color):
+            max_width = 400
+
+            # create the ImageFont instances
+            font_normal = ImageFont.truetype(
+                join(BASE_DIR, "Fonts", "LucidaGrande.ttf"), size=30, encoding="unic"
+            )
+            font_bold = ImageFont.truetype(
+                join(BASE_DIR, "Fonts", "LucidaGrandeBold.ttf"),
+                size=30,
+                encoding="unic",
+            )
+
+            # get text_blob
+            text_blob = text_wrap(text, font_normal, max_width)
+
+            # get width and height of name and text blob
+            line_width_bold, line_height_bold = font_bold.getsize(name)
+            line_width, line_height = font_normal.getsize_multiline(text_blob)
+
+            # get scalable width and height
+            img = Image.new(
+                "RGB",
+                (
+                    max(line_width_bold, line_width) + 40,
+                    25 + line_height_bold + 45 + line_height + 25,
+                ),
+                color=(11, 8, 26),
+            )
+            draw = ImageDraw.Draw(img)
+
+            # put username
+            draw.text((20, 25), name, assigned_color, font_bold)
+
+            # put text
+            draw.multiline_text(
+                (20, 15 + line_height_bold + 45),
+                text_blob,
+                (255, 255, 255),
+                font_normal,
+            )
+
+            result = add_corners(img)
+
+            return result
+
+        def mask_circle_transparent(img, offset=0):
+            # mask the background of circular profile pic thumbnail
+            offset = 0 * 2 + offset
+            mask = Image.new("L", img.size, 0)
             draw = ImageDraw.Draw(mask)
             draw.ellipse(
-                (offset, offset, pil_img.size[0] - offset, pil_img.size[1] - offset),
+                (offset, offset, img.size[0] - offset, img.size[1] - offset),
                 fill=255,
             )
-            mask = mask.filter(ImageFilter.GaussianBlur(blur_radius))
+            mask = mask.filter(ImageFilter.GaussianBlur(0))
 
-            result = pil_img.copy()
+            result = img.copy()
             result.putalpha(mask)
 
             return result
 
-        def get_ico(dp_name):
+        def get_ico_thumbnail(dp_name):
+            # get circular profile pic
             im = Image.open(dp_name)
-            size = 40, 40
-            result = mask_circle_transparent(im, 0)
+            size = 100, 100
+            result = mask_circle_transparent(im)
             result.thumbnail(size)
-            # result.save(
-            #     f"{update.effective_message.reply_to_message.from_user.id}_dp.png"
-            # )
             return result
 
         def get_concat_h(img1, img2):
+            # concat both images
             dst = Image.new(
-                "RGB", (img1.width + img2.width + 5, max(img1.height, img2.height))
+                "RGB", (img1.width + img2.width + 15, max(img1.height, img2.height))
             )
             dst.putalpha(0)
             dst.paste(img1, (0, 0))
-            dst.paste(img2, (img1.width + 5, 0))
+            dst.paste(img2, (img1.width + 15, 0))
+            # save image in webp format
             dst.save(
                 f"{update.effective_message.reply_to_message.from_user.id}_final.webp",
-                "webp",
+                "WEBP",
                 lossless=True,
             )
 
-        BASE_DIR = getcwd()
-        dp = get_ico(f"{update.effective_message.reply_to_message.from_user.id}_dp.jpg")
-        body = draw_text(name, text)
+        # get base directory
+        BASE_DIR = Path(sys.argv[0]).parent.absolute()
+        dp = get_ico_thumbnail(
+            f"{update.effective_message.reply_to_message.from_user.id}_dp.jpg"
+        )
+        body = draw_text(name, text, assigned_color)
         get_concat_h(dp, body)
 
-    name, text, profile_pic = get_message_data(rep_msg)
-    get_raw_sticker(name, text)
-    context.bot.send_sticker(
-        chat_id=rep_msg.chat.id,
-        sticker=open(
-            f"{update.effective_message.reply_to_message.from_user.id}_final.webp", "rb"
-        ),
-        reply_to_message_id=update.effective_message.message_id,
-    )
-    remove(f"{update.effective_message.reply_to_message.from_user.id}_final.webp")
-    remove(f"{update.effective_message.reply_to_message.from_user.id}_dp.jpg")
+    try:
+        name, text, assigned_color = get_message_data(rep_msg)
+        get_raw_sticker(name, text, assigned_color)
+
+        # send generated image as sticker
+        rep_msg.reply_sticker(
+            sticker=open(
+                f"{update.effective_message.reply_to_message.from_user.id}_final.webp",
+                "rb",
+            )
+        )
+
+        # remove stored images
+        remove(f"{update.effective_message.reply_to_message.from_user.id}_final.webp")
+        remove(f"{update.effective_message.reply_to_message.from_user.id}_dp.jpg")
+
+    except AttributeError:
+        update.effective_message.reply_text(
+            "Please reply to a message to get its quote.\nThis cat can't read your mind"
+        )
 
 
 start_handler = CommandHandler("quote", get_sticker)
